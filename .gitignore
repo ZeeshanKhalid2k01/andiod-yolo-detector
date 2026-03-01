@@ -13,9 +13,11 @@ build/
 .cxx/
 app/.cxx/
 
-# NCNN model binaries
+# NCNN model binaries (global + explicit assets path)
 *.ncnn.bin
 *.ncnn.param
+app/src/main/assets/*.ncnn.bin
+app/src/main/assets/*.ncnn.param
 
 # Gradle caches & metadata
 .gradle/
