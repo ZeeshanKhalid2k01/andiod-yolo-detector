@@ -26,6 +26,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -61,6 +63,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
 
     private YOLOv8Ncnn yolov8ncnn = new YOLOv8Ncnn();
     private int facing = 0;
+    private int captureW = 1920;
+    private int captureH = 1080;
 
     private int current_taskid = 0;
     private int current_model = 0;
@@ -94,6 +98,16 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
     private Handler fpsHandler = new Handler();
     private Runnable fpsRunnable;
 
+    // Zoom
+    private ScaleGestureDetector scaleGestureDetector;
+    private float currentZoom = 1.0f;
+    private float maxZoom = 10.0f; // updated from hardware after camera opens
+    private TextView textZoomLevel;
+    private final Handler zoomHideHandler = new Handler();
+    private final Runnable zoomHideRunnable = () -> {
+        if (textZoomLevel != null) textZoomLevel.setVisibility(View.GONE);
+    };
+
     @Override
     public void onCreate(Bundle savedInstanceState)
     {
@@ -125,13 +139,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         // Load settings from SharedPreferences
         loadSettings();
 
-        // Back button → finish
+        // Back button → always return to Home (never exit)
         btnBack.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v)
             {
-                finish();
-                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+                navigateToHome();
             }
         });
 
@@ -142,8 +155,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
             {
                 int new_facing = 1 - facing;
                 yolov8ncnn.closeCamera();
+                yolov8ncnn.setCaptureResolution(captureW, captureH);
                 yolov8ncnn.openCamera(new_facing);
-                facing = new_facing;
+                facing  = new_facing;
+                maxZoom = yolov8ncnn.getMaxZoom();
+                currentZoom = 1.0f;
             }
         });
 
@@ -156,6 +172,37 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
                 updateUploadUI();
                 Log.i("MainActivity", "Upload " + (uploadEnabled ? "enabled" : "disabled"));
             }
+        });
+
+        textZoomLevel = (TextView) findViewById(R.id.textZoomLevel);
+
+        // Pinch-to-zoom
+        scaleGestureDetector = new ScaleGestureDetector(this,
+                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector)
+            {
+                currentZoom *= detector.getScaleFactor();
+                if (currentZoom < 1.0f)    currentZoom = 1.0f;
+                if (currentZoom > maxZoom) currentZoom = maxZoom;
+                yolov8ncnn.setZoom(currentZoom);
+
+                // Show overlay "2.5× / 100×" so user knows the range
+                if (textZoomLevel != null)
+                {
+                    textZoomLevel.setText(String.format(Locale.US,
+                            "%.1f\u00d7 / %.0f\u00d7", currentZoom, maxZoom));
+                    textZoomLevel.setVisibility(View.VISIBLE);
+                }
+                zoomHideHandler.removeCallbacks(zoomHideRunnable);
+                zoomHideHandler.postDelayed(zoomHideRunnable, 2000);
+                return true;
+            }
+        });
+
+        cameraView.setOnTouchListener((v, event) -> {
+            scaleGestureDetector.onTouchEvent(event);
+            return true;
         });
 
         updateUploadUI();
@@ -249,6 +296,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         float confFloat = confInt / 100f;
         yolov8ncnn.setConfidenceThreshold(confFloat);
         Log.d("MainActivity", "Confidence threshold set to " + confFloat + " (from pref=" + confInt + ")");
+
+        // Store capture resolution — passed to setCaptureResolution() before camera opens
+        captureW = prefs.getInt("camera_capture_w", 1920);
+        captureH = prefs.getInt("camera_capture_h", 1080);
 
         // Apply label visibility from settings
         yolov8ncnn.setShowLabels(prefs.getBoolean("show_labels", true));
@@ -361,7 +412,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
                 @Override
                 public void run()
                 {
+                    yolov8ncnn.setCaptureResolution(captureW, captureH);
                     yolov8ncnn.openCamera(facing);
+                    maxZoom = yolov8ncnn.getMaxZoom();
+                    Log.d("MainActivity", "maxZoom=" + maxZoom + " facing=" + facing);
                 }
             }, 300);
         }
@@ -411,7 +465,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
                 @Override
                 public void run()
                 {
+                    yolov8ncnn.setCaptureResolution(captureW, captureH);
                     yolov8ncnn.openCamera(facing);
+                    maxZoom = yolov8ncnn.getMaxZoom();
                 }
             }, 300);
         }
@@ -442,7 +498,16 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
     @Override
     public void onBackPressed()
     {
-        super.onBackPressed();
+        navigateToHome();
+    }
+
+    private void navigateToHome()
+    {
+        android.content.Intent intent = new android.content.Intent(this, HomeActivity.class);
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(intent);
+        finish();
         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
     }
 
