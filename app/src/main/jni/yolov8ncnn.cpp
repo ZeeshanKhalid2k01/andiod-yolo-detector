@@ -20,6 +20,7 @@
 
 #include <jni.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -435,6 +436,60 @@ JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setConfidenceThres
 {
     g_prob_threshold = (float)threshold;
     __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "setConfidenceThreshold %.3f", g_prob_threshold);
+}
+
+// public native float getMaxZoom();
+JNIEXPORT jfloat JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_getMaxZoom(JNIEnv* env, jobject thiz)
+{
+    if (g_camera)
+        return (jfloat)g_camera->max_zoom_ratio;
+    return 10.0f;
+}
+
+// public native void setMaxZoom(float max);
+// Called from Java after querying CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE via
+// the Java Camera2 API, which reliably returns the true device max on all OEMs.
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setMaxZoom(JNIEnv* env, jobject thiz, jfloat max)
+{
+    if (g_camera && (float)max > 1.0f)
+    {
+        g_camera->max_zoom_ratio = (float)max;
+        __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "setMaxZoom %.1f", (float)max);
+    }
+}
+
+// public native void setZoom(float ratio);
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setZoom(JNIEnv* env, jobject thiz, jfloat ratio)
+{
+    if (g_camera)
+    {
+        g_camera->setZoom((float)ratio);
+    }
+}
+
+// public native void setCaptureResolution(int w, int h);
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setCaptureResolution(JNIEnv* env, jobject thiz, jint w, jint h)
+{
+    __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "setCaptureResolution %dx%d", (int)w, (int)h);
+    if (g_camera)
+    {
+        g_camera->setResolution((int)w, (int)h);
+    }
+}
+
+// public native void processFrame(byte[] nv21, int width, int height);
+// Feeds a NV21 frame from Java Camera2 into the existing NdkCameraWindow::on_image()
+// pipeline (crop/rotate/YOLO inference/render to ANativeWindow).
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_processFrame(JNIEnv* env, jobject thiz, jbyteArray nv21, jint width, jint height)
+{
+    if (!g_camera) return;
+
+    jbyte* data = env->GetByteArrayElements(nv21, nullptr);
+    if (data)
+    {
+        g_camera->on_image(reinterpret_cast<const unsigned char*>(data), (int)width, (int)height);
+        env->ReleaseByteArrayElements(nv21, data, JNI_ABORT);
+    }
 }
 
 // public native void registerCallback(Object activityOrNull);

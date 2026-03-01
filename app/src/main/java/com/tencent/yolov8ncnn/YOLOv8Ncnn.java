@@ -27,6 +27,10 @@ public class YOLOv8Ncnn
     public native void setBoxColor(int r, int g, int b);
     public native void setShowLabels(boolean show);
     public native void setConfidenceThreshold(float threshold);
+    public native float getMaxZoom();
+    public native void setMaxZoom(float max);
+    public native void setZoom(float ratio);
+    public native void setCaptureResolution(int w, int h);
     public native void registerCallback(Object activityOrNull);
 
     static {
