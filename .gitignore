@@ -1,0 +1,33 @@
+# Prebuilt third-party SDKs (download separately)
+app/src/main/jni/ncnn-20260113-android-vulkan/
+app/src/main/jni/opencv-mobile-4.13.0-android/
+
+# Build outputs
+*.bin
+*.so
+*.a
+*.aar
+*.apk
+app/build/
+build/
+.cxx/
+app/.cxx/
+
+# NCNN model binaries
+*.ncnn.bin
+*.ncnn.param
+
+# Gradle caches & metadata
+.gradle/
+local.properties
+
+# IDE files
+.idea/
+*.iml
+.DS_Store
+
+# CMake build artifacts
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile

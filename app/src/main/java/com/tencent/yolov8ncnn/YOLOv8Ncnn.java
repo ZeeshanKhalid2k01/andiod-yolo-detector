@@ -23,6 +23,9 @@ public class YOLOv8Ncnn
     public native boolean openCamera(int facing);
     public native boolean closeCamera();
     public native boolean setOutputWindow(Surface surface);
+    public native float getFps();
+    public native void setBoxColor(int r, int g, int b);
+    public native void setShowLabels(boolean show);
 
     static {
         System.loadLibrary("yolov8ncnn");

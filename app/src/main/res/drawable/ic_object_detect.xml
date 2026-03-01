@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Viewfinder corners representing object detection bounding box -->
+    <!-- Top-left corner -->
+    <path
+        android:pathData="M3,3L3,8M3,3L8,3"
+        android:strokeWidth="2"
+        android:strokeColor="#FF8800"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+    <!-- Top-right corner -->
+    <path
+        android:pathData="M21,3L21,8M21,3L16,3"
+        android:strokeWidth="2"
+        android:strokeColor="#FF8800"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+    <!-- Bottom-left corner -->
+    <path
+        android:pathData="M3,21L3,16M3,21L8,21"
+        android:strokeWidth="2"
+        android:strokeColor="#FF8800"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+    <!-- Bottom-right corner -->
+    <path
+        android:pathData="M21,21L21,16M21,21L16,21"
+        android:strokeWidth="2"
+        android:strokeColor="#FF8800"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+    <!-- Small box in center -->
+    <path
+        android:pathData="M9,9L15,9L15,15L9,15Z"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FF8800"
+        android:fillColor="#00000000" />
+</vector>

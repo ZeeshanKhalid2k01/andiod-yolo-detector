@@ -100,4 +100,11 @@ public:
     virtual int draw(cv::Mat& rgb, const std::vector<Object>& objects);
 };
 
+class YOLOv11_face : public YOLOv8
+{
+public:
+    virtual int detect(const cv::Mat& rgb, std::vector<Object>& objects);
+    virtual int draw(cv::Mat& rgb, const std::vector<Object>& objects);
+};
+
 #endif // YOLOV8_H

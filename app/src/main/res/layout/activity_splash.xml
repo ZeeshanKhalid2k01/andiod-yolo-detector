@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_dark"
+    android:gravity="center">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <!-- Eye icon with glow -->
+        <FrameLayout
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_gravity="center">
+
+            <!-- Glow background -->
+            <View
+                android:id="@+id/glowView"
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:layout_gravity="center"
+                android:alpha="0"
+                android:background="@drawable/splash_glow_circle" />
+
+            <ImageView
+                android:id="@+id/iconEye"
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_eye"
+                android:alpha="0" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/textAppName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="FaceDetect"
+            android:textColor="@color/text_primary"
+            android:textSize="36sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-light"
+            android:alpha="0" />
+
+        <TextView
+            android:id="@+id/textTagline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Real-time AI Face Detection"
+            android:textColor="@color/accent_green"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif"
+            android:letterSpacing="0.1"
+            android:alpha="0" />
+
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_centerHorizontal="true"
+        android:layout_marginBottom="32dp"
+        android:text="Powered by ncnn"
+        android:textColor="@color/text_secondary"
+        android:textSize="11sp"
+        android:fontFamily="sans-serif" />
+
+</RelativeLayout>

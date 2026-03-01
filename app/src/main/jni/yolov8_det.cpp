@@ -59,6 +59,14 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
+// Box color from yolov8ncnn.cpp (stored as BGR)
+extern int g_box_r;
+extern int g_box_g;
+extern int g_box_b;
+
+// Label visibility from yolov8ncnn.cpp
+extern bool g_show_labels;
+
 static inline float intersection_area(const Object& a, const Object& b)
 {
     cv::Rect_<float> inter = a.rect & b.rect;
@@ -402,35 +410,37 @@ int YOLOv8_det_coco::draw(cv::Mat& rgb, const std::vector<Object>& objects)
         cv::Scalar(125, 139,  96)
     };
 
+    // Use user-selected box color (BGR order for OpenCV)
+    cv::Scalar box_color(g_box_b, g_box_g, g_box_r);
+
     for (size_t i = 0; i < objects.size(); i++)
     {
         const Object& obj = objects[i];
 
-        const cv::Scalar& color = colors[i % 19];
+        cv::rectangle(rgb, obj.rect, box_color, 2);
 
-        // fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
-                // obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+        // Draw label if enabled
+        if (g_show_labels)
+        {
+            char label[256];
+            sprintf(label, "%s %.0f%%", class_names[obj.label], obj.prob * 100);
 
-        cv::rectangle(rgb, obj.rect, color);
+            int baseLine = 0;
+            cv::Size label_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &baseLine);
 
-        char text[256];
-        sprintf(text, "%s %.1f%%", class_names[obj.label], obj.prob * 100);
+            int lx = obj.rect.x;
+            int ly = obj.rect.y - label_size.height - baseLine;
+            if (ly < 0) ly = 0;
 
-        int baseLine = 0;
-        cv::Size label_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+            // Dark background for label
+            cv::rectangle(rgb,
+                cv::Rect(lx, ly, label_size.width, label_size.height + baseLine),
+                cv::Scalar(0, 0, 0), -1);
 
-        int x = obj.rect.x;
-        int y = obj.rect.y - label_size.height - baseLine;
-        if (y < 0)
-            y = 0;
-        if (x + label_size.width > rgb.cols)
-            x = rgb.cols - label_size.width;
-
-        cv::rectangle(rgb, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
-                      cv::Scalar(255, 255, 255), -1);
-
-        cv::putText(rgb, text, cv::Point(x, y + label_size.height),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0));
+            // White text
+            cv::putText(rgb, label, cv::Point(lx, ly + label_size.height),
+                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+        }
     }
 
     return 0;
@@ -538,35 +548,37 @@ int YOLOv8_det_oiv7::draw(cv::Mat& rgb, const std::vector<Object>& objects)
         cv::Scalar(125, 139,  96)
     };
 
+    // Use user-selected box color (BGR order for OpenCV)
+    cv::Scalar box_color(g_box_b, g_box_g, g_box_r);
+
     for (size_t i = 0; i < objects.size(); i++)
     {
         const Object& obj = objects[i];
 
-        const cv::Scalar& color = colors[i % 19];
+        cv::rectangle(rgb, obj.rect, box_color, 2);
 
-        // fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
-                // obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+        // Draw label if enabled
+        if (g_show_labels)
+        {
+            char label[256];
+            sprintf(label, "%s %.0f%%", class_names[obj.label], obj.prob * 100);
 
-        cv::rectangle(rgb, obj.rect, color);
+            int baseLine = 0;
+            cv::Size label_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &baseLine);
 
-        char text[256];
-        sprintf(text, "%s %.1f%%", class_names[obj.label], obj.prob * 100);
+            int lx = obj.rect.x;
+            int ly = obj.rect.y - label_size.height - baseLine;
+            if (ly < 0) ly = 0;
 
-        int baseLine = 0;
-        cv::Size label_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+            // Dark background for label
+            cv::rectangle(rgb,
+                cv::Rect(lx, ly, label_size.width, label_size.height + baseLine),
+                cv::Scalar(0, 0, 0), -1);
 
-        int x = obj.rect.x;
-        int y = obj.rect.y - label_size.height - baseLine;
-        if (y < 0)
-            y = 0;
-        if (x + label_size.width > rgb.cols)
-            x = rgb.cols - label_size.width;
-
-        cv::rectangle(rgb, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
-                      cv::Scalar(255, 255, 255), -1);
-
-        cv::putText(rgb, text, cv::Point(x, y + label_size.height),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0));
+            // White text
+            cv::putText(rgb, label, cv::Point(lx, ly + label_size.height),
+                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+        }
     }
 
     return 0;

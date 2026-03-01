@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Full-screen camera surface -->
+    <SurfaceView
+        android:id="@+id/cameraView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Top overlay bar — gradient fade -->
+    <RelativeLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_alignParentTop="true"
+        android:background="@drawable/overlay_gradient_top"
+        android:paddingHorizontal="12dp">
+
+        <!-- Back arrow -->
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_centerVertical="true"
+            android:layout_alignParentStart="true"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_back"
+            android:scaleType="centerInside"
+            android:contentDescription="Back" />
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:text="FaceDetect"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <!-- FPS badge (green pill) -->
+        <TextView
+            android:id="@+id/textFps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/fps_badge_bg"
+            android:text="-- FPS"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+    </RelativeLayout>
+
+    <!-- Bottom overlay bar — gradient fade -->
+    <RelativeLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:layout_alignParentBottom="true"
+        android:background="@drawable/overlay_gradient_bottom"
+        android:paddingHorizontal="24dp">
+
+        <!-- Switch camera button -->
+        <ImageButton
+            android:id="@+id/btnSwitchCamera"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/btn_circle_dark"
+            android:src="@drawable/ic_switch_camera"
+            android:scaleType="centerInside"
+            android:contentDescription="Switch Camera" />
+
+        <!-- Upload status indicator -->
+        <LinearLayout
+            android:id="@+id/uploadStatusContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <View
+                android:id="@+id/uploadStatusDot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/status_dot_grey" />
+
+            <TextView
+                android:id="@+id/textUploadStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Upload Off"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <!-- Upload toggle (pill button) -->
+        <Button
+            android:id="@+id/btnToggleUpload"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/btn_dark_pill"
+            android:text="Upload"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            android:paddingHorizontal="20dp"
+            android:minWidth="0dp" />
+    </RelativeLayout>
+
+</RelativeLayout>

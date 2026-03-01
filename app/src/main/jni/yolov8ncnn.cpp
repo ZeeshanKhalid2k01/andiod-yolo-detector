@@ -92,25 +92,23 @@ static int draw_fps(cv::Mat& rgb)
         avg_fps /= 10.f;
     }
 
-    char text[32];
-    sprintf(text, "FPS=%.2f", avg_fps);
-
-    int baseLine = 0;
-    cv::Size label_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
-
-    int y = 0;
-    int x = rgb.cols - label_size.width;
-
-    cv::rectangle(rgb, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
-                    cv::Scalar(255, 255, 255), -1);
-
-    cv::putText(rgb, text, cv::Point(x, y + label_size.height),
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0));
-
+    // FPS is now tracked via g_avg_fps for Java overlay — no native drawing
     return 0;
 }
 
+// Global FPS value readable from JNI
+static float g_avg_fps = 0.f;
+
+// Global box color (stored as BGR for OpenCV) — settable from Java via setBoxColor
+int g_box_r = 100;
+int g_box_g = 255;
+int g_box_b = 0;  // default green (BGR: 0, 255, 100)
+
+// Global label visibility flag — settable from Java via setShowLabels
+bool g_show_labels = true;
+
 static YOLOv8* g_yolov8 = 0;
+static bool g_model_ready = false;
 static ncnn::Mutex lock;
 
 class MyNdkCamera : public NdkCameraWindow
@@ -125,7 +123,7 @@ void MyNdkCamera::on_image_render(cv::Mat& rgb) const
     {
         ncnn::MutexLockGuard g(lock);
 
-        if (g_yolov8)
+        if (g_yolov8 && g_model_ready)
         {
             std::vector<Object> objects;
             g_yolov8->detect(rgb, objects);
@@ -138,7 +136,29 @@ void MyNdkCamera::on_image_render(cv::Mat& rgb) const
         }
     }
 
-    draw_fps(rgb);
+    // Compute FPS and store in global for Java overlay (no native drawing)
+    {
+        static double t0 = 0.f;
+        static float fps_history[10] = {0.f};
+
+        double t1 = ncnn::get_current_time();
+        if (t0 != 0.f)
+        {
+            float fps = 1000.f / (t1 - t0);
+            for (int i = 9; i >= 1; i--)
+                fps_history[i] = fps_history[i - 1];
+            fps_history[0] = fps;
+
+            if (fps_history[9] != 0.f)
+            {
+                float sum = 0.f;
+                for (int i = 0; i < 10; i++)
+                    sum += fps_history[i];
+                g_avg_fps = sum / 10.f;
+            }
+        }
+        t0 = t1;
+    }
 }
 
 static MyNdkCamera* g_camera = 0;
@@ -163,6 +183,7 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
     {
         ncnn::MutexLockGuard g(lock);
 
+        g_model_ready = false;
         delete g_yolov8;
         g_yolov8 = 0;
     }
@@ -176,7 +197,10 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
 // public native boolean loadModel(AssetManager mgr, int taskid, int modelid, int cpugpu);
 JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_loadModel(JNIEnv* env, jobject thiz, jobject assetManager, jint taskid, jint modelid, jint cpugpu)
 {
-    if (taskid < 0 || taskid > 5 || modelid < 0 || modelid > 8 || cpugpu < 0 || cpugpu > 2)
+    // taskid 0-5 = yolov8 tasks, 6 = yolov11 face
+    // modelid 0-8 for yolov8 (3 sizes x 3 res), 0-11 for face (4 sizes x 3 res)
+    int max_modelid = (taskid == 6) ? 11 : 8;
+    if (taskid < 0 || taskid > 6 || modelid < 0 || modelid > max_modelid || cpugpu < 0 || cpugpu > 2)
     {
         return JNI_FALSE;
     }
@@ -185,14 +209,15 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_loadModel(JNIE
 
     __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "loadModel %p", mgr);
 
-    const char* tasknames[6] =
+    const char* tasknames[7] =
     {
         "",
         "_oiv7",
         "_seg",
         "_pose",
         "_cls",
-        "_obb"
+        "_obb",
+        "_face"
     };
 
     const char* modeltypes[9] =
@@ -208,8 +233,27 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_loadModel(JNIE
         "m"
     };
 
-    std::string parampath = std::string("yolov8") + modeltypes[(int)modelid] + tasknames[(int)taskid] + ".ncnn.param";
-    std::string modelpath = std::string("yolov8") + modeltypes[(int)modelid] + tasknames[(int)taskid] + ".ncnn.bin";
+    std::string parampath;
+    std::string modelpath;
+
+    if (taskid == 6)
+    {
+        // YOLOv11 face: modelid = resolution * 4 + modelSize
+        // modelSize: 0=n, 1=s, 2=m, 3=l  resolution: 0=320, 1=480, 2=640
+        const char* face_sizes[4] = { "n", "s", "m", "l" };
+        const char* face_res[3] = { "320", "480", "640" };
+        int faceModelSize = (int)modelid % 4;
+        int faceResolution = (int)modelid / 4;
+        if (faceModelSize > 3) faceModelSize = 0;
+        if (faceResolution > 2) faceResolution = 0;
+        parampath = std::string("yolov11") + face_sizes[faceModelSize] + "_face_" + face_res[faceResolution] + ".ncnn.param";
+        modelpath = std::string("yolov11") + face_sizes[faceModelSize] + "_face_" + face_res[faceResolution] + ".ncnn.bin";
+    }
+    else
+    {
+        parampath = std::string("yolov8") + modeltypes[(int)modelid] + tasknames[(int)taskid] + ".ncnn.param";
+        modelpath = std::string("yolov8") + modeltypes[(int)modelid] + tasknames[(int)taskid] + ".ncnn.bin";
+    }
     bool use_gpu = (int)cpugpu == 1;
     bool use_turnip = (int)cpugpu == 2;
 
@@ -217,19 +261,17 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_loadModel(JNIE
     {
         ncnn::MutexLockGuard g(lock);
 
+        // Mark model not ready while reloading
+        g_model_ready = false;
+
         {
-            static int old_taskid = 0;
-            static int old_modelid = 0;
-            static int old_cpugpu = 0;
-            if (taskid != old_taskid || (modelid % 3) != old_modelid || cpugpu != old_cpugpu)
-            {
-                // taskid or model or cpugpu changed
-                delete g_yolov8;
-                g_yolov8 = 0;
-            }
-            old_taskid = taskid;
-            old_modelid = modelid % 3;
-            old_cpugpu = cpugpu;
+            // Always delete and rebuild g_yolov8.
+            // The GPU instance is always destroyed and recreated below, so any
+            // existing model holds stale Vulkan handles (VkPipeline, VkFence, etc.)
+            // for the old VkDevice.  Reusing it causes vkWaitForFences to hang on
+            // the destroyed device, which blocks on_image_render forever → blank screen.
+            delete g_yolov8;
+            g_yolov8 = 0;
 
             ncnn::destroy_gpu_instance();
 
@@ -242,23 +284,34 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_loadModel(JNIE
                 ncnn::create_gpu_instance();
             }
 
-            if (!g_yolov8)
-            {
-                if (taskid == 0) g_yolov8 = new YOLOv8_det_coco;
-                if (taskid == 1) g_yolov8 = new YOLOv8_det_oiv7;
-                if (taskid == 2) g_yolov8 = new YOLOv8_seg;
-                if (taskid == 3) g_yolov8 = new YOLOv8_pose;
-                if (taskid == 4) g_yolov8 = new YOLOv8_cls;
-                if (taskid == 5) g_yolov8 = new YOLOv8_obb;
+            if (taskid == 0) g_yolov8 = new YOLOv8_det_coco;
+            if (taskid == 1) g_yolov8 = new YOLOv8_det_oiv7;
+            if (taskid == 2) g_yolov8 = new YOLOv8_seg;
+            if (taskid == 3) g_yolov8 = new YOLOv8_pose;
+            if (taskid == 4) g_yolov8 = new YOLOv8_cls;
+            if (taskid == 5) g_yolov8 = new YOLOv8_obb;
+            if (taskid == 6) g_yolov8 = new YOLOv11_face;
 
-                g_yolov8->load(mgr, parampath.c_str(), modelpath.c_str(), use_gpu || use_turnip);
-            }
+            g_yolov8->load(mgr, parampath.c_str(), modelpath.c_str(), use_gpu || use_turnip);
             int target_size = 320;
-            if ((int)modelid >= 3)
-                target_size = 480;
-            if ((int)modelid >= 6)
-                target_size = 640;
+            if (taskid == 6)
+            {
+                // face: modelid = resolution * 4 + modelSize
+                int faceRes = (int)modelid / 4;
+                if (faceRes == 1) target_size = 480;
+                if (faceRes == 2) target_size = 640;
+            }
+            else
+            {
+                if ((int)modelid >= 3)
+                    target_size = 480;
+                if ((int)modelid >= 6)
+                    target_size = 640;
+            }
             g_yolov8->set_det_target_size(target_size);
+
+            // Model is now fully loaded and ready
+            g_model_ready = true;
         }
     }
 
@@ -298,6 +351,27 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setOutputWindo
     g_camera->set_window(win);
 
     return JNI_TRUE;
+}
+
+// public native float getFps();
+JNIEXPORT jfloat JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_getFps(JNIEnv* env, jobject thiz)
+{
+    return g_avg_fps;
+}
+
+// public native void setBoxColor(int r, int g, int b);
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setBoxColor(JNIEnv* env, jobject thiz, jint r, jint g, jint b)
+{
+    // Java passes RGB — swap R and B for OpenCV BGR storage
+    g_box_r = (int)b;  // store B in r slot
+    g_box_g = (int)g;  // G stays same
+    g_box_b = (int)r;  // store R in b slot
+}
+
+// public native void setShowLabels(boolean show);
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setShowLabels(JNIEnv* env, jobject thiz, jboolean show)
+{
+    g_show_labels = (bool)show;
 }
 
 }
