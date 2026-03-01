@@ -26,6 +26,8 @@ public class YOLOv8Ncnn
     public native float getFps();
     public native void setBoxColor(int r, int g, int b);
     public native void setShowLabels(boolean show);
+    public native void setConfidenceThreshold(float threshold);
+    public native void registerCallback(Object activityOrNull);
 
     static {
         System.loadLibrary("yolov8ncnn");

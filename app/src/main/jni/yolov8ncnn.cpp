@@ -107,6 +107,14 @@ int g_box_b = 0;  // default green (BGR: 0, 255, 100)
 // Global label visibility flag — settable from Java via setShowLabels
 bool g_show_labels = true;
 
+// Global confidence threshold — settable from Java via setConfidenceThreshold
+float g_prob_threshold = 0.45f;
+
+// JNI callback state
+static JavaVM*    g_jvm             = nullptr;
+static jobject    g_activity_ref    = nullptr;  // global ref to MainActivity
+static jmethodID  g_onFaceReady_mid = nullptr;
+
 static YOLOv8* g_yolov8 = 0;
 static bool g_model_ready = false;
 static ncnn::Mutex lock;
@@ -129,6 +137,42 @@ void MyNdkCamera::on_image_render(cv::Mat& rgb) const
             g_yolov8->detect(rgb, objects);
 
             g_yolov8->draw(rgb, objects);
+
+            // JNI callback — fire for each qualifying face.
+            // Pass raw RGB bytes to Java; JPEG encoding happens in upload worker (not here).
+            if (!objects.empty() && g_jvm && g_activity_ref && g_onFaceReady_mid)
+            {
+                // Attach camera thread to JVM once; stays attached across frames.
+                JNIEnv* env = nullptr;
+                int attachStatus = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_4);
+                if (attachStatus == JNI_EDETACHED)
+                {
+                    g_jvm->AttachCurrentThread(&env, nullptr);
+                }
+
+                if (env)
+                {
+                    // Copy raw RGB frame (3 bytes/pixel, no padding assumed for continuous Mat)
+                    jint frameW   = (jint)rgb.cols;
+                    jint frameH   = (jint)rgb.rows;
+                    jsize numBytes = (jsize)(frameW * frameH * 3);
+                    jbyteArray jRgb = env->NewByteArray(numBytes);
+                    env->SetByteArrayRegion(jRgb, 0, numBytes,
+                                            reinterpret_cast<const jbyte*>(rgb.data));
+
+                    for (const auto& obj : objects)
+                    {
+                        env->CallVoidMethod(
+                            g_activity_ref, g_onFaceReady_mid,
+                            jRgb, frameW, frameH,
+                            (jfloat)obj.rect.x,    (jfloat)obj.rect.y,
+                            (jfloat)obj.rect.width, (jfloat)obj.rect.height,
+                            (jfloat)obj.prob);
+                    }
+
+                    env->DeleteLocalRef(jRgb);
+                }
+            }
         }
         else
         {
@@ -169,6 +213,8 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved)
 {
     __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "JNI_OnLoad");
 
+    g_jvm = vm;
+
     g_camera = new MyNdkCamera;
 
     ncnn::create_gpu_instance();
@@ -192,6 +238,16 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
 
     delete g_camera;
     g_camera = 0;
+
+    // Release activity global ref
+    if (g_activity_ref && g_jvm)
+    {
+        JNIEnv* env = nullptr;
+        g_jvm->GetEnv((void**)&env, JNI_VERSION_1_4);
+        if (env) env->DeleteGlobalRef(g_activity_ref);
+        g_activity_ref = nullptr;
+    }
+    g_jvm = nullptr;
 }
 
 // public native boolean loadModel(AssetManager mgr, int taskid, int modelid, int cpugpu);
@@ -372,6 +428,40 @@ JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setBoxColor(JNIEnv
 JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setShowLabels(JNIEnv* env, jobject thiz, jboolean show)
 {
     g_show_labels = (bool)show;
+}
+
+// public native void setConfidenceThreshold(float threshold);
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setConfidenceThreshold(JNIEnv* env, jobject thiz, jfloat threshold)
+{
+    g_prob_threshold = (float)threshold;
+    __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "setConfidenceThreshold %.3f", g_prob_threshold);
+}
+
+// public native void registerCallback(Object activityOrNull);
+JNIEXPORT void JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_registerCallback(JNIEnv* env, jobject thiz, jobject activity)
+{
+    // Release previous global ref
+    if (g_activity_ref)
+    {
+        env->DeleteGlobalRef(g_activity_ref);
+        g_activity_ref = nullptr;
+        g_onFaceReady_mid = nullptr;
+    }
+
+    if (activity)
+    {
+        g_activity_ref = env->NewGlobalRef(activity);
+        jclass clazz = env->GetObjectClass(activity);
+        // signature: (byte[] rgb, int width, int height, float x, float y, float w, float h, float conf) -> void
+        g_onFaceReady_mid = env->GetMethodID(clazz, "onFaceReady", "([BIIFFFFF)V");
+        env->DeleteLocalRef(clazz);
+        __android_log_print(ANDROID_LOG_DEBUG, "ncnn",
+            "registerCallback: activity=%p mid=%p", g_activity_ref, g_onFaceReady_mid);
+    }
+    else
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "registerCallback: cleared");
+    }
 }
 
 }

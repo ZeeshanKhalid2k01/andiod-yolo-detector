@@ -16,11 +16,15 @@ package com.tencent.yolov8ncnn;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.PixelFormat;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.Bundle;
 import android.os.Handler;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -30,10 +34,23 @@ import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.TextView;
 
+import java.io.ByteArrayOutputStream;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import android.graphics.Bitmap;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback
 {
@@ -61,6 +78,18 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
 
     private String serverIp = "";
     private String serverPort = "8080";
+    private boolean wifiOnly = true;
+    private String deviceId = "";
+
+    // Upload pipeline
+    private final RingBuffer ringBuffer = new RingBuffer(5);
+    private final OkHttpClient httpClient = new OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .build();
+    private ExecutorService uploadExecutor;
+    private volatile boolean uploaderRunning = false;
 
     private Handler fpsHandler = new Handler();
     private Runnable fpsRunnable;
@@ -130,6 +159,15 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         });
 
         updateUploadUI();
+
+        // Device identifier for upload metadata
+        deviceId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+
+        // Start background upload worker
+        uploaderRunning = true;
+        uploadExecutor = Executors.newSingleThreadExecutor();
+        uploadExecutor.submit(this::runUploadWorker);
+
         // Model will be loaded when surface is ready (surfaceChanged)
 
         // FPS polling runnable — updates every 500ms
@@ -160,6 +198,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         serverIp = prefs.getString("server_ip", "");
         serverPort = prefs.getString("server_port", "8080");
         uploadEnabled = prefs.getBoolean("auto_upload", false);
+        wifiOnly = prefs.getBoolean("wifi_only", true);
 
         // model_size: 0=nano, 1=small, 2=medium (3=large for face)
         // resolution: 0=320, 1=480, 2=640
@@ -204,6 +243,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
 
         // Apply box color from settings
         applyBoxColor(prefs.getInt("box_color", 0));
+
+        // Apply confidence threshold from settings (saved as int 0-100, convert to 0.0-1.0)
+        int confInt = prefs.getInt("confidence", 55);
+        float confFloat = confInt / 100f;
+        yolov8ncnn.setConfidenceThreshold(confFloat);
+        Log.d("MainActivity", "Confidence threshold set to " + confFloat + " (from pref=" + confInt + ")");
 
         // Apply label visibility from settings
         yolov8ncnn.setShowLabels(prefs.getBoolean("show_labels", true));
@@ -351,6 +396,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         loadSettings();
         updateUploadUI();
 
+        // Register JNI callback so C++ can push face frames to us
+        yolov8ncnn.registerCallback(this);
+
         // Restart FPS polling
         fpsHandler.removeCallbacks(fpsRunnable);
         fpsHandler.post(fpsRunnable);
@@ -376,6 +424,19 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         super.onPause();
         fpsHandler.removeCallbacks(fpsRunnable);
         yolov8ncnn.closeCamera();
+        // Clear JNI callback ref so C++ doesn't call into a paused activity
+        yolov8ncnn.registerCallback(null);
+    }
+
+    @Override
+    public void onDestroy()
+    {
+        super.onDestroy();
+        uploaderRunning = false;
+        if (uploadExecutor != null)
+        {
+            uploadExecutor.shutdownNow();
+        }
     }
 
     @Override
@@ -388,24 +449,198 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
     // Static accessors for JNI / upload service
     public static String getServerIp()
     {
-        if (instance != null)
-        {
-            return instance.serverIp;
-        }
+        if (instance != null) return instance.serverIp;
         return "";
     }
 
     public static String getServerPort()
     {
-        if (instance != null)
-        {
-            return instance.serverPort;
-        }
+        if (instance != null) return instance.serverPort;
         return "8080";
     }
 
     public static boolean isUploadEnabled()
     {
         return instance != null && instance.uploadEnabled;
+    }
+
+    // ── JNI callback — called from camera thread for each qualifying face ──────
+    // Receives raw RGB bytes; JPEG encoding deferred to upload worker to avoid
+    // blocking the camera render thread on every frame.
+
+    public void onFaceReady(byte[] rgbBytes, int width, int height,
+                            float x, float y, float w, float h, float conf)
+    {
+        ringBuffer.push(new FramePacket(rgbBytes, width, height, x, y, w, h, conf));
+    }
+
+    // ── Upload worker — runs on single background thread ──────────────────────
+
+    private void runUploadWorker()
+    {
+        long lastUploadTime = 0;
+        while (uploaderRunning)
+        {
+            FramePacket packet = ringBuffer.poll();
+            if (packet == null)
+            {
+                try { Thread.sleep(50); } catch (InterruptedException e) { break; }
+                continue;
+            }
+
+            if (!uploadEnabled) continue;
+
+            long now = System.currentTimeMillis();
+            if (now - lastUploadTime < 1000) continue;  // rate limit: 1 upload/sec
+
+            if (wifiOnly && !isOnWifi())
+            {
+                updateStatusDot(false);
+                continue;
+            }
+
+            boolean ok = uploadPacket(packet);
+            if (ok) lastUploadTime = now;
+            updateStatusDot(ok);
+        }
+    }
+
+    private byte[] encodeJpeg(byte[] rgb, int width, int height)
+    {
+        // Convert raw RGB bytes to ARGB int[] then compress via Android Bitmap
+        int[] pixels = new int[width * height];
+        for (int i = 0; i < pixels.length; i++)
+        {
+            int r = rgb[i * 3]     & 0xFF;
+            int g = rgb[i * 3 + 1] & 0xFF;
+            int b = rgb[i * 3 + 2] & 0xFF;
+            pixels[i] = (0xFF << 24) | (r << 16) | (g << 8) | b;
+        }
+        Bitmap bmp = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        bmp.compress(Bitmap.CompressFormat.JPEG, 85, baos);
+        bmp.recycle();
+        return baos.toByteArray();
+    }
+
+    private boolean uploadPacket(FramePacket p)
+    {
+        if (serverIp == null || serverIp.isEmpty()) return false;
+        String url = "http://" + serverIp + ":" + serverPort + "/detect";
+        try
+        {
+            byte[] jpeg = encodeJpeg(p.rgb, p.width, p.height);
+
+            RequestBody body = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("image", "face.jpg",
+                            RequestBody.create(jpeg, MediaType.parse("image/jpeg")))
+                    .addFormDataPart("box_x",      String.valueOf(p.x))
+                    .addFormDataPart("box_y",      String.valueOf(p.y))
+                    .addFormDataPart("box_w",      String.valueOf(p.w))
+                    .addFormDataPart("box_h",      String.valueOf(p.h))
+                    .addFormDataPart("confidence", String.valueOf(p.conf))
+                    .addFormDataPart("timestamp",  String.valueOf(p.timestamp))
+                    .addFormDataPart("device_id",  deviceId)
+                    .build();
+
+            Request request = new Request.Builder().url(url).post(body).build();
+            try (Response response = httpClient.newCall(request).execute())
+            {
+                boolean ok = response.isSuccessful();
+                Log.d("MainActivity", "Upload " + (ok ? "OK" : "FAIL")
+                        + " HTTP " + response.code() + " → " + url);
+                return ok;
+            }
+        }
+        catch (Exception e)
+        {
+            Log.e("MainActivity", "Upload error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean isOnWifi()
+    {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        NetworkInfo ni = cm.getActiveNetworkInfo();
+        return ni != null && ni.isConnected() && ni.getType() == ConnectivityManager.TYPE_WIFI;
+    }
+
+    private void updateStatusDot(boolean success)
+    {
+        runOnUiThread(() -> {
+            if (uploadStatusDot != null)
+            {
+                uploadStatusDot.setBackgroundResource(
+                        success ? R.drawable.status_dot_green : R.drawable.status_dot_red);
+            }
+        });
+    }
+
+    // ── Inner classes ─────────────────────────────────────────────────────────
+
+    static class FramePacket
+    {
+        final byte[] rgb;        // raw RGB bytes (3 bytes/pixel, no padding)
+        final int    width;
+        final int    height;
+        final float  x, y, w, h, conf;
+        final long   timestamp;
+
+        FramePacket(byte[] rgb, int width, int height,
+                    float x, float y, float w, float h, float conf)
+        {
+            this.rgb       = rgb;
+            this.width     = width;
+            this.height    = height;
+            this.x         = x;
+            this.y         = y;
+            this.w         = w;
+            this.h         = h;
+            this.conf      = conf;
+            this.timestamp = System.currentTimeMillis();
+        }
+    }
+
+    static class RingBuffer
+    {
+        private final FramePacket[] buf;
+        private int readIdx  = 0;
+        private int writeIdx = 0;
+        private int size     = 0;
+        private final int capacity;
+
+        RingBuffer(int capacity)
+        {
+            this.capacity = capacity;
+            this.buf      = new FramePacket[capacity];
+        }
+
+        synchronized void push(FramePacket p)
+        {
+            buf[writeIdx] = p;
+            writeIdx = (writeIdx + 1) % capacity;
+            if (size < capacity)
+            {
+                size++;
+            }
+            else
+            {
+                // Buffer full — overwrite oldest, advance read pointer
+                readIdx = (readIdx + 1) % capacity;
+            }
+        }
+
+        synchronized FramePacket poll()
+        {
+            if (size == 0) return null;
+            FramePacket p = buf[readIdx];
+            readIdx = (readIdx + 1) % capacity;
+            size--;
+            return p;
+        }
     }
 }

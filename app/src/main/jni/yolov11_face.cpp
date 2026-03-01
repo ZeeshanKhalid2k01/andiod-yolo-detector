@@ -15,6 +15,9 @@ extern int g_box_b;
 // Label visibility from yolov8ncnn.cpp
 extern bool g_show_labels;
 
+// Confidence threshold from yolov8ncnn.cpp
+extern float g_prob_threshold;
+
 // Only 1 class: face
 static const char* face_class = "face";
 
@@ -218,7 +221,7 @@ static void generate_proposals(const ncnn::Mat& pred, const std::vector<int>& st
 int YOLOv11_face::detect(const cv::Mat& rgb, std::vector<Object>& objects)
 {
     const int target_size = det_target_size;
-    const float prob_threshold = 0.55f;
+    const float prob_threshold = g_prob_threshold;
     const float nms_threshold = 0.35f;
 
     int img_w = rgb.cols;
@@ -349,8 +352,7 @@ int YOLOv11_face::detect(const cv::Mat& rgb, std::vector<Object>& objects)
             // Model already applies sigmoid internally; row(4) is a probability in [0,1].
             // Do NOT apply sigmoid again — that was causing ~850 false positives.
             float conf = out.row(4)[i];
-            // Anchors 1600-2099 are padding/garbage filled with exactly 0.5 (sigmoid(0)).
-            // Skip them before the threshold check to avoid false proposals.
+            // Anchors filled with exactly 0.5 (sigmoid(0)) are padding/garbage — skip.
             if (fabsf(conf - 0.5f) < 1e-6f)
                 continue;
             if (conf < prob_threshold)
@@ -368,9 +370,15 @@ int YOLOv11_face::detect(const cv::Mat& rgb, std::vector<Object>& objects)
             // Reject anchors outside valid padded-input bounds
             if (cx < 0 || cx >= in_pad.w || cy < 0 || cy >= in_pad.h)
                 continue;
-            // Reject boxes wider/taller than 60% of padded input (filters coarse stride-16)
-            if (bw > in_pad.w * 0.85f || bh > in_pad.h * 0.85f)
+            // Reject oversized boxes (head+torso detections were 250–290px).
+            // Normal face boxes from any stride level are well under 200px.
+            if (bw > 200.f || bh > 200.f)
+            {
+                __android_log_print(ANDROID_LOG_DEBUG, "YOLOv11face",
+                    "SIZE filter drop anchor[%d]: bw=%.1f bh=%.1f conf=%.3f",
+                    i, bw, bh, conf);
                 continue;
+            }
 
             Object obj;
             obj.rect.x = cx - bw * 0.5f;
@@ -503,6 +511,31 @@ int YOLOv11_face::detect(const cv::Mat& rgb, std::vector<Object>& objects)
         objects[i].rect.y = y0;
         objects[i].rect.width = x1 - x0;
         objects[i].rect.height = y1 - y0;
+    }
+
+    // Filter: discard faces smaller than 100×100 px in original image coords.
+    // Uses scale_x/scale_y from inference resolution → original camera resolution.
+    float scale_x = img_w / (float)target_size;
+    float scale_y = img_h / (float)target_size;
+    {
+        std::vector<Object> large_objects;
+        large_objects.reserve(objects.size());
+        for (const auto& o : objects)
+        {
+            float face_w = o.rect.width  * scale_x;
+            float face_h = o.rect.height * scale_y;
+            if (face_w > 100.f && face_h > 100.f)
+            {
+                large_objects.push_back(o);
+            }
+            else
+            {
+                __android_log_print(ANDROID_LOG_DEBUG, "YOLOv11face",
+                    "SKIP small face: w=%.1f h=%.1f (scaled: %.1f×%.1f) prob=%.3f",
+                    o.rect.width, o.rect.height, face_w, face_h, o.prob);
+            }
+        }
+        objects = large_objects;
     }
 
     // sort objects by area
